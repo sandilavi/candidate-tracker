@@ -1,0 +1,15 @@
+{
+  "name": "candidate-tracker",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "build:shared": "npm run build --workspace=packages/shared",
+    "dev": "npm run dev:api & npm run dev:web",
+    "build": "npm run build:shared"
+  }
+}
