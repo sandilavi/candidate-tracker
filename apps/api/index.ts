@@ -13,6 +13,7 @@ server.setSerializerCompiler(serializerCompiler);
 // Register CORS
 server.register(cors, {
   origin: '*', // For development, allow all origins
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
 });
 
 import candidateRoutes from './routes/candidates';

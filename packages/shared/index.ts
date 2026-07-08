@@ -9,9 +9,9 @@ export const CandidateSchema = z.object({
   location: z.string().nullable().optional(),
   linkedin_url: z.string().url("Invalid URL").nullable().optional(),
   notes: z.string().nullable().optional(),
-  created_at: z.date(),
-  updated_at: z.date(),
-  deleted_at: z.date().nullable().optional(),
+  created_at: z.coerce.date(),
+  updated_at: z.coerce.date(),
+  deleted_at: z.coerce.date().nullable().optional(),
 });
 
 export const ApplicationStatusEnum = z.enum([
@@ -29,12 +29,12 @@ export const ApplicationSchema = z.object({
   job_title: z.string().min(1, "Job title is required"),
   company: z.string().min(1, "Company is required"),
   status: ApplicationStatusEnum,
-  applied_at: z.date(),
+  applied_at: z.coerce.date(),
   salary_expectation: z.number().nullable().optional(),
   source: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
-  created_at: z.date(),
-  updated_at: z.date(),
+  created_at: z.coerce.date(),
+  updated_at: z.coerce.date(),
 });
 
 // Types inferred from schemas for frontend/backend usage

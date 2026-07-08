@@ -9,7 +9,7 @@ const prisma = new PrismaClient();
 export default async function applicationRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
-  // 1. GET /applications - List applications with cross-entity search support
+  // GET /applications - List applications with cross-entity search support
   server.get(
     '/',
     {
@@ -58,7 +58,7 @@ export default async function applicationRoutes(app: FastifyInstance) {
     }
   );
 
-  // 2. GET /applications/:id - Get a single application
+  // GET /applications/:id - Get a single application
   server.get(
     '/:id',
     {
@@ -84,36 +84,45 @@ export default async function applicationRoutes(app: FastifyInstance) {
     }
   );
 
-  // 3. POST /applications - Create a new application
+  // POST /applications - Create a new application
   server.post(
     '/',
     {
       schema: {
-        body: ApplicationSchema.omit({ id: true, applied_at: true, updated_at: true }),
+        body: ApplicationSchema.omit({ id: true, created_at: true, updated_at: true }),
         response: {
           201: ApplicationSchema,
+          400: z.object({ error: z.string() }),
+          500: z.object({ error: z.string() }),
         },
       },
     },
     async (request, reply) => {
       const data = request.body;
-      const newApplication = await prisma.application.create({
-        data: data as any,
-      });
-      return reply.status(201).send(newApplication as any);
+      try {
+        const newApplication = await prisma.application.create({
+          data: data as any,
+        });
+        return reply.status(201).send(newApplication as any);
+      } catch (error) {
+        console.error("POST Application Error:", error);
+        return reply.status(500).send({ error: 'Failed to create application. Please verify all fields.' } as any);
+      }
     }
   );
 
-  // 4. PUT /applications/:id - Update an existing application (e.g. changing status)
+  // PUT /applications/:id - Update an existing application (e.g. changing status)
   server.put(
     '/:id',
     {
       schema: {
         params: z.object({ id: z.string().uuid() }),
-        body: ApplicationSchema.omit({ id: true, applied_at: true, updated_at: true }).partial(),
+        body: ApplicationSchema.omit({ id: true, created_at: true, updated_at: true }).partial(),
         response: {
           200: ApplicationSchema,
+          400: z.object({ error: z.string() }),
           404: z.object({ error: z.string() }),
+          500: z.object({ error: z.string() }),
         },
       },
     },
@@ -127,13 +136,17 @@ export default async function applicationRoutes(app: FastifyInstance) {
           data: data as any,
         });
         return updatedApplication as any;
-      } catch (error) {
-        return reply.status(404).send({ error: 'Application not found or update failed' });
+      } catch (error: any) {
+        if (error.code === 'P2025') {
+           return reply.status(404).send({ error: 'Application not found' } as any);
+        }
+        console.error("PUT Application Error:", error);
+        return reply.status(500).send({ error: 'Failed to update application. Please verify all fields.' } as any);
       }
     }
   );
 
-  // 5. DELETE /applications/:id - Delete an application
+  // DELETE /applications/:id - Delete an application
   server.delete(
     '/:id',
     {
