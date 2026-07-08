@@ -12,18 +12,18 @@ function getRandomInt(min: number, max: number) {
   return Math.floor(Math.random() * (max - min + 1)) + min;
 }
 
-function getRandomItem(arr: any[]) {
+function getRandomItem<T>(arr: T[]): T {
   return arr[getRandomInt(0, arr.length - 1)];
 }
 
 async function main() {
   console.log("Starting database seed...");
 
-  // Clean up existing data to prevent duplicates on re-seed
+  // Wipe the DB clean before seeding to prevent duplicates
   await prisma.application.deleteMany();
   await prisma.candidate.deleteMany();
 
-  // Generate 10 Candidates
+  // Need exactly 10 candidates per the requirements
   for (let i = 1; i <= 10; i++) {
     const candidateId = randomUUID();
     const candidate = await prisma.candidate.create({
@@ -40,7 +40,7 @@ async function main() {
 
     console.log(`Created candidate: ${candidate.name}`);
 
-    // Generate 2-4 Applications for each Candidate
+    // Each candidate gets 2-4 random applications
     const appCount = getRandomInt(2, 4);
     for (let j = 1; j <= appCount; j++) {
       await prisma.application.create({
@@ -49,7 +49,7 @@ async function main() {
           job_title: getRandomItem(jobTitles),
           company: getRandomItem(companies),
           status: getRandomItem(statuses),
-          applied_at: new Date(Date.now() - getRandomInt(1, 60) * 24 * 60 * 60 * 1000), // Random date within last 60 days
+          applied_at: new Date(Date.now() - getRandomInt(1, 60) * 24 * 60 * 60 * 1000), // Scatter dates over the last couple of months
           salary_expectation: getRandomInt(80, 150) * 1000,
           source: getRandomItem(sources),
           notes: `Application ${j} notes for ${candidate.name}`,

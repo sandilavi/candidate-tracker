@@ -65,3 +65,30 @@ export const UpdateApplicationSchema = CreateApplicationSchema.partial();
 
 export type UpdateCandidateInput = z.infer<typeof UpdateCandidateSchema>;
 export type UpdateApplicationInput = z.infer<typeof UpdateApplicationSchema>;
+
+// Pagination and Query Schemas
+export const PaginationQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).optional().default(1),
+  limit: z.coerce.number().int().min(1).max(100).optional().default(10),
+  search: z.string().optional(),
+});
+
+export const ApplicationQuerySchema = PaginationQuerySchema.extend({
+  status: ApplicationStatusEnum.optional(),
+  date_from: z.string().optional(),
+  date_to: z.string().optional(),
+});
+
+export type PaginationQuery = z.infer<typeof PaginationQuerySchema>;
+export type ApplicationQuery = z.infer<typeof ApplicationQuerySchema>;
+
+// Helper for Paginated Responses
+export type PaginatedResponse<T> = {
+  data: T[];
+  meta: {
+    total: number;
+    page: number;
+    limit: number;
+    totalPages: number;
+  };
+};

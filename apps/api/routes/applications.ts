@@ -1,64 +1,100 @@
 import { FastifyInstance } from 'fastify';
 import { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { ApplicationSchema } from '@candidate-tracker/shared';
+import { ApplicationSchema, ApplicationQuerySchema } from '@candidate-tracker/shared';
 
 const prisma = new PrismaClient();
 
 export default async function applicationRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
-  // GET /applications - List applications with cross-entity search support
+  // Fetch paginated applications (supports advanced cross-entity search)
   server.get(
     '/',
     {
       schema: {
-        querystring: z.object({
-          search: z.string().optional(),
-        }),
+        querystring: ApplicationQuerySchema,
         response: {
-          // Returning application alongside the candidate name for UI display
-          200: z.array(ApplicationSchema.extend({
-            candidate_name: z.string()
-          })),
+          // Include the candidate's name so the UI doesn't have to fetch it separately
+          200: z.object({
+            data: z.array(ApplicationSchema.extend({
+              candidate_name: z.string()
+            })),
+            meta: z.object({
+              total: z.number(),
+              page: z.number(),
+              limit: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
         },
       },
     },
     async (request, reply) => {
-      const { search } = request.query;
+      const { page, limit, search, status, date_from, date_to } = request.query;
 
-      // Cross-entity search: search by candidate name OR application status
-      const applications = await prisma.application.findMany({
-        where: search
-          ? {
-              OR: [
-                { status: { contains: search, mode: 'insensitive' } },
-                {
-                  candidate: {
-                    name: { contains: search, mode: 'insensitive' },
-                  },
-                },
-              ],
-            }
-          : undefined,
-        include: {
-          candidate: {
-            select: { name: true },
+      const AND: Prisma.ApplicationWhereInput[] = [{ candidate: { deleted_at: null } }];
+
+      if (status) {
+        AND.push({ status });
+      }
+
+      if (date_from || date_to) {
+        const dateFilter: Prisma.DateTimeFilter = {};
+        if (date_from) dateFilter.gte = new Date(date_from);
+        if (date_to) dateFilter.lte = new Date(date_to);
+        AND.push({ applied_at: dateFilter });
+      }
+
+      if (search) {
+        AND.push({
+          OR: [
+            { job_title: { contains: search, mode: 'insensitive' } },
+            { company: { contains: search, mode: 'insensitive' } },
+            { source: { contains: search, mode: 'insensitive' } },
+            { notes: { contains: search, mode: 'insensitive' } },
+            { candidate: { name: { contains: search, mode: 'insensitive' } } },
+            { candidate: { email: { contains: search, mode: 'insensitive' } } },
+            { candidate: { location: { contains: search, mode: 'insensitive' } } },
+          ],
+        });
+      }
+
+      const whereClause = { AND };
+
+      const [total, applications] = await Promise.all([
+        prisma.application.count({ where: whereClause }),
+        prisma.application.findMany({
+          where: whereClause,
+          skip: (page - 1) * limit,
+          take: limit,
+          include: {
+            candidate: {
+              select: { name: true },
+            },
           },
-        },
-        orderBy: { applied_at: 'desc' },
-      });
+          orderBy: { applied_at: 'desc' },
+        })
+      ]);
 
-      // Flatten the candidate name for easier UI rendering
-      return applications.map((app) => ({
-        ...app,
-        candidate_name: app.candidate.name,
-      })) as any;
+      return {
+        data: applications.map((app) => ({
+          ...app,
+          status: app.status as 'applied' | 'screening' | 'interview' | 'offer' | 'hired' | 'rejected',
+          candidate_name: app.candidate.name,
+        })),
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
     }
   );
 
-  // GET /applications/:id - Get a single application
+  // Fetch a single application by ID
   server.get(
     '/:id',
     {
@@ -80,11 +116,14 @@ export default async function applicationRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: 'Application not found' });
       }
 
-      return application as any;
+      return {
+        ...application,
+        status: application.status as 'applied' | 'screening' | 'interview' | 'offer' | 'hired' | 'rejected',
+      };
     }
   );
 
-  // POST /applications - Create a new application
+  // Create a new application
   server.post(
     '/',
     {
@@ -99,19 +138,17 @@ export default async function applicationRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const data = request.body;
-      try {
-        const newApplication = await prisma.application.create({
-          data: data as any,
-        });
-        return reply.status(201).send(newApplication as any);
-      } catch (error) {
-        console.error("POST Application Error:", error);
-        return reply.status(500).send({ error: 'Failed to create application. Please verify all fields.' } as any);
-      }
+      const newApplication = await prisma.application.create({
+        data,
+      });
+      return reply.status(201).send({
+        ...newApplication,
+        status: newApplication.status as 'applied' | 'screening' | 'interview' | 'offer' | 'hired' | 'rejected',
+      });
     }
   );
 
-  // PUT /applications/:id - Update an existing application (e.g. changing status)
+  // Update application details (like changing the status to 'interview' or 'hired')
   server.put(
     '/:id',
     {
@@ -133,20 +170,22 @@ export default async function applicationRoutes(app: FastifyInstance) {
       try {
         const updatedApplication = await prisma.application.update({
           where: { id },
-          data: data as any,
+          data,
         });
-        return updatedApplication as any;
-      } catch (error: any) {
-        if (error.code === 'P2025') {
-           return reply.status(404).send({ error: 'Application not found' } as any);
+        return {
+          ...updatedApplication,
+          status: updatedApplication.status as 'applied' | 'screening' | 'interview' | 'offer' | 'hired' | 'rejected',
+        };
+      } catch (error: unknown) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+          throw Object.assign(new Error('Application not found'), { statusCode: 404 });
         }
-        console.error("PUT Application Error:", error);
-        return reply.status(500).send({ error: 'Failed to update application. Please verify all fields.' } as any);
+        throw error;
       }
     }
   );
 
-  // DELETE /applications/:id - Delete an application
+  // Delete an application entirely
   server.delete(
     '/:id',
     {
@@ -166,8 +205,11 @@ export default async function applicationRoutes(app: FastifyInstance) {
           where: { id },
         });
         return { success: true };
-      } catch (error) {
-        return reply.status(404).send({ error: 'Application not found' });
+      } catch (error: unknown) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+          throw Object.assign(new Error('Application not found'), { statusCode: 404 });
+        }
+        throw error;
       }
     }
   );

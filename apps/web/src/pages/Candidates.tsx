@@ -3,8 +3,19 @@ import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Search, MoreVertical, MapPin, Mail, Briefcase, Users, X, Trash2, Edit2, Save, Phone, Link as LinkIcon, FileText } from 'lucide-react';
 import { CandidateSchema } from '@candidate-tracker/shared';
+import type { PaginatedResponse } from '@candidate-tracker/shared';
 import { z } from 'zod';
 import apiClient from '../api/client';
+
+interface ApiError {
+  response?: {
+    data?: {
+      error?: string;
+      message?: string;
+    };
+  };
+  message: string;
+}
 
 // We extend the schema with the generated fields (id, timestamps)
 type Candidate = z.infer<typeof CandidateSchema> & { id: string; created_at: string; updated_at: string };
@@ -24,13 +35,30 @@ export default function Candidates() {
     notes: ''
   });
 
-  const { data: candidates, isLoading, isError } = useQuery<Candidate[]>({
-    queryKey: ['candidates'],
+  const [page, setPage] = useState(1);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedSearchTerm(searchTerm);
+      setPage(1); // Reset page to 1 on new search
+    }, 400);
+    return () => clearTimeout(handler);
+  }, [searchTerm]);
+
+  const { data: responseData, isLoading, isError } = useQuery<PaginatedResponse<Candidate>>({
+    queryKey: ['candidates', page, debouncedSearchTerm],
     queryFn: async () => {
-      const response = await apiClient.get('/candidates');
+      const response = await apiClient.get('/candidates', {
+        params: { page, limit: 10, search: debouncedSearchTerm || undefined }
+      });
       return response.data;
     },
   });
+
+  const candidates = responseData?.data;
+  const meta = responseData?.meta;
 
   useEffect(() => {
     const id = searchParams.get('id');
@@ -90,7 +118,7 @@ export default function Candidates() {
     },
     onError: (error) => {
       console.error("Delete candidate error:", error);
-      alert("Failed to delete candidate: " + (error as any).message);
+      alert("Failed to delete candidate: " + (error as ApiError).message);
     }
   });
 
@@ -152,6 +180,8 @@ export default function Candidates() {
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
           <input
             type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
             placeholder="Search candidates by name, email, or role..."
             className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
           />
@@ -238,6 +268,28 @@ export default function Candidates() {
                 <p className="text-slate-500">There are no candidates in the system right now.</p>
               </div>
             )}
+            
+            {meta && meta.totalPages > 1 && (
+              <div className="col-span-full flex items-center justify-between bg-white px-4 py-3 border border-slate-200 rounded-xl mt-4">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  Previous
+                </button>
+                <span className="text-sm text-slate-700">
+                  Page <span className="font-medium">{meta.page}</span> of <span className="font-medium">{meta.totalPages}</span>
+                </span>
+                <button
+                  onClick={() => setPage(p => Math.min(meta.totalPages, p + 1))}
+                  disabled={page === meta.totalPages}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  Next
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>
@@ -265,8 +317,8 @@ export default function Candidates() {
               <div className="p-6 overflow-y-auto space-y-5 flex-1">
                 {updateCandidateMutation.isError && (
                   <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
-                    {((updateCandidateMutation.error as any)?.response?.data?.error || 
-                     (updateCandidateMutation.error as any)?.response?.data?.message || 
+                    {((updateCandidateMutation.error as ApiError)?.response?.data?.error || 
+                     (updateCandidateMutation.error as ApiError)?.response?.data?.message || 
                      "Failed to update candidate.")}
                   </div>
                 )}
@@ -444,8 +496,8 @@ export default function Candidates() {
               <div className="p-6 overflow-y-auto space-y-5 flex-1">
                 {createCandidateMutation.isError && (
                   <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
-                    {((createCandidateMutation.error as any)?.response?.data?.error || 
-                     (createCandidateMutation.error as any)?.response?.data?.message || 
+                    {((createCandidateMutation.error as ApiError)?.response?.data?.error || 
+                     (createCandidateMutation.error as ApiError)?.response?.data?.message || 
                      "Failed to add candidate. Please check the fields and try again.")}
                   </div>
                 )}

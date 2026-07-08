@@ -1,34 +1,71 @@
 import { FastifyInstance } from 'fastify';
 import { ZodTypeProvider } from 'fastify-type-provider-zod';
-import { PrismaClient } from '@prisma/client';
+import { PrismaClient, Prisma } from '@prisma/client';
 import { z } from 'zod';
-import { CandidateSchema } from '@candidate-tracker/shared';
+import { CandidateSchema, PaginationQuerySchema } from '@candidate-tracker/shared';
 
 const prisma = new PrismaClient();
 
 export default async function candidateRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
-  // GET /candidates - List all candidates
+  // Fetch paginated candidates
   server.get(
     '/',
     {
       schema: {
+        querystring: PaginationQuerySchema,
         response: {
-          200: z.array(CandidateSchema),
+          200: z.object({
+            data: z.array(CandidateSchema),
+            meta: z.object({
+              total: z.number(),
+              page: z.number(),
+              limit: z.number(),
+              totalPages: z.number(),
+            }),
+          }),
         },
       },
     },
     async (request, reply) => {
-      const candidates = await prisma.candidate.findMany({
-        where: { deleted_at: null },
-        orderBy: { created_at: 'desc' },
-      });
-      return candidates as any;
+      const { page, limit, search } = request.query;
+
+      const whereClause = {
+        deleted_at: null,
+        ...(search ? {
+          OR: [
+            { name: { contains: search, mode: 'insensitive' as const } },
+            { email: { contains: search, mode: 'insensitive' as const } },
+            { location: { contains: search, mode: 'insensitive' as const } },
+            { phone: { contains: search, mode: 'insensitive' as const } },
+          ]
+        } : {})
+      };
+
+      const [total, candidates] = await Promise.all([
+        prisma.candidate.count({ where: whereClause }),
+        prisma.candidate.findMany({
+          where: whereClause,
+          skip: (page - 1) * limit,
+          take: limit,
+          orderBy: { created_at: 'desc' },
+        })
+      ]);
+
+      return {
+        data: candidates,
+        meta: {
+          total,
+          page,
+          limit,
+          totalPages: Math.ceil(total / limit)
+        }
+      };
     }
   );
 
-  // GET /candidates/:id - Get a single candidate by ID
+  // Fetch a single candidate by ID
   server.get(
     '/:id',
     {
@@ -50,11 +87,11 @@ export default async function candidateRoutes(app: FastifyInstance) {
         return reply.status(404).send({ error: 'Candidate not found' });
       }
 
-      return candidate as any;
+      return candidate;
     }
   );
 
-  // POST /candidates - Create a new candidate
+  // Add a new candidate
   server.post(
     '/',
     {
@@ -69,21 +106,14 @@ export default async function candidateRoutes(app: FastifyInstance) {
     },
     async (request, reply) => {
       const data = request.body;
-      try {
-        const newCandidate = await prisma.candidate.create({
-          data: data as any,
-        });
-        return reply.status(201).send(newCandidate as any);
-      } catch (error: any) {
-        if (error.code === 'P2002') {
-          return reply.status(400).send({ error: 'A candidate with this email already exists' } as any);
-        }
-        return reply.status(500).send({ error: 'Internal server error' } as any);
-      }
+      const newCandidate = await prisma.candidate.create({
+        data,
+      });
+      return reply.status(201).send(newCandidate);
     }
   );
 
-  // PUT /candidates/:id - Update an existing candidate
+  // Update candidate details
   server.put(
     '/:id',
     {
@@ -103,16 +133,19 @@ export default async function candidateRoutes(app: FastifyInstance) {
       try {
         const updatedCandidate = await prisma.candidate.update({
           where: { id },
-          data: data as any,
+          data,
         });
-        return updatedCandidate as any;
-      } catch (error) {
-        return reply.status(404).send({ error: 'Candidate not found or update failed' });
+        return updatedCandidate;
+      } catch (error: unknown) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+          throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
+        }
+        throw error;
       }
     }
   );
 
-  // DELETE /candidates/:id - Soft delete a candidate
+  // Soft delete a candidate (sets deleted_at, does not actually drop the row)
   server.delete(
     '/:id',
     {
@@ -133,8 +166,11 @@ export default async function candidateRoutes(app: FastifyInstance) {
           data: { deleted_at: new Date() },
         });
         return { success: true };
-      } catch (error) {
-        return reply.status(404).send({ error: 'Candidate not found' });
+      } catch (error: unknown) {
+        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+          throw Object.assign(new Error('Candidate not found'), { statusCode: 404 });
+        }
+        throw error;
       }
     }
   );

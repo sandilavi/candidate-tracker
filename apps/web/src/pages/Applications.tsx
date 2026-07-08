@@ -1,10 +1,21 @@
 import { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Search, Edit2, Save, FileText, Calendar, Building, Filter, Plus, X, Trash2 } from 'lucide-react';
+import { Search, Edit2, Save, FileText, Calendar, Building, Plus, X, Trash2 } from 'lucide-react';
 import { ApplicationSchema, CandidateSchema } from '@candidate-tracker/shared';
+import type { PaginatedResponse } from '@candidate-tracker/shared';
 import { z } from 'zod';
 import apiClient from '../api/client';
+
+interface ApiError {
+  response?: {
+    data?: {
+      error?: string;
+      message?: string;
+    };
+  };
+  message: string;
+}
 
 // The API returns the Application with the candidate_name injected
 type Application = z.infer<typeof ApplicationSchema> & {
@@ -29,7 +40,10 @@ export default function Applications() {
   const queryClient = useQueryClient();
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
-  
+  const [page, setPage] = useState(1);
+  const [statusFilter, setStatusFilter] = useState('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
   // Modal states
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedApplication, setSelectedApplication] = useState<Application | null>(null);
@@ -51,23 +65,37 @@ export default function Applications() {
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm);
+      setPage(1); // Reset page on new search
     }, 400); // 400ms delay
 
-    return () => {
-      clearTimeout(handler);
-    };
+    return () => clearTimeout(handler);
   }, [searchTerm]);
 
-  // Fetch applications with the debounced search term
-  const { data: applications, isLoading, isError } = useQuery<Application[]>({
-    queryKey: ['applications', debouncedSearchTerm],
+  // Reset page when filters change
+  useEffect(() => {
+    setPage(1);
+  }, [statusFilter, dateFrom, dateTo]);
+
+  // Fetch applications with all filters and pagination
+  const { data: responseData, isLoading, isError } = useQuery<PaginatedResponse<Application>>({
+    queryKey: ['applications', page, debouncedSearchTerm, statusFilter, dateFrom, dateTo],
     queryFn: async () => {
       const response = await apiClient.get('/applications', {
-        params: { search: debouncedSearchTerm || undefined },
+        params: { 
+          page, 
+          limit: 10, 
+          search: debouncedSearchTerm || undefined,
+          status: statusFilter || undefined,
+          date_from: dateFrom || undefined,
+          date_to: dateTo || undefined
+        },
       });
       return response.data;
     },
   });
+
+  const applications = responseData?.data;
+  const meta = responseData?.meta;
 
   // Fetch candidates for the dropdown in the modal
   const { data: candidates } = useQuery<Candidate[]>({
@@ -185,21 +213,51 @@ export default function Applications() {
       </div>
 
       {/* Search and Filters */}
-      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col md:flex-row gap-4">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
-          <input
-            type="text"
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search by candidate name or status..."
-            className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-          />
+      <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-col gap-4">
+        <div className="flex flex-col xl:flex-row gap-4">
+          <div className="relative flex-1">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" size={20} />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Search by candidate, role, company..."
+              className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+            />
+          </div>
+          <div className="flex flex-col sm:flex-row gap-4">
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-700 font-medium min-w-[150px]"
+            >
+              <option value="">All Statuses</option>
+              <option value="applied">Applied</option>
+              <option value="screening">Screening</option>
+              <option value="interview">Interview</option>
+              <option value="offer">Offer</option>
+              <option value="hired">Hired</option>
+              <option value="rejected">Rejected</option>
+            </select>
+            <div className="flex items-center gap-2">
+              <input
+                type="date"
+                value={dateFrom}
+                onChange={(e) => setDateFrom(e.target.value)}
+                title="From Date"
+                className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-700"
+              />
+              <span className="text-slate-400">-</span>
+              <input
+                type="date"
+                value={dateTo}
+                onChange={(e) => setDateTo(e.target.value)}
+                title="To Date"
+                className="px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 text-slate-700"
+              />
+            </div>
+          </div>
         </div>
-        <button className="flex items-center justify-center gap-2 px-4 py-2.5 border border-slate-200 rounded-lg text-slate-600 hover:bg-slate-50 transition-colors font-medium">
-          <Filter size={20} />
-          <span>Filters</span>
-        </button>
       </div>
 
       {/* Applications List */}
@@ -227,60 +285,84 @@ export default function Applications() {
         )}
 
         {!isLoading && !isError && applications && applications.length > 0 && (
-          <table className="w-full text-left border-collapse">
-            <thead>
-              <tr className="bg-slate-50 border-b border-slate-200">
-                <th className="px-6 py-4 font-semibold text-slate-600 text-sm">Candidate</th>
-                <th className="px-6 py-4 font-semibold text-slate-600 text-sm">Role</th>
-                <th className="px-6 py-4 font-semibold text-slate-600 text-sm">Status</th>
-                <th className="px-6 py-4 font-semibold text-slate-600 text-sm hidden md:table-cell">Applied Date</th>
-                <th className="px-6 py-4 font-semibold text-slate-600 text-sm text-right">Actions</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-100">
-              {applications.map((app) => (
-                <tr key={app.id} className="hover:bg-slate-50 transition-colors group">
-                  <td className="px-6 py-4">
-                    <Link 
-                      to={`/candidates?id=${app.candidate_id}`} 
-                      className="font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
-                    >
-                      {app.candidate_name}
-                    </Link>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2 text-slate-600">
-                      <Building size={16} className="text-slate-400" />
-                      {app.job_title} <span className="text-slate-400 text-sm font-normal">at {app.company}</span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span
-                      className={`px-3 py-1 text-xs font-semibold rounded-full border ${
-                        statusColors[app.status] || statusColors.applied
-                      } capitalize`}
-                    >
-                      {app.status}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 text-slate-500 text-sm hidden md:table-cell">
-                    <div className="flex items-center gap-2">
-                      <Calendar size={14} className="text-slate-400" />
-                      {new Date(app.applied_at).toLocaleDateString()}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <button 
-                      onClick={() => setSelectedApplication(app)}
-                      className="text-indigo-600 font-medium text-sm hover:text-indigo-800 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
-                    >
-                      View Details
-                    </button>
-                  </td>
+          <div className="flex flex-col">
+            <table className="w-full text-left border-collapse">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-200">
+                  <th className="px-6 py-4 font-semibold text-slate-600 text-sm">Candidate</th>
+                  <th className="px-6 py-4 font-semibold text-slate-600 text-sm">Role</th>
+                  <th className="px-6 py-4 font-semibold text-slate-600 text-sm">Status</th>
+                  <th className="px-6 py-4 font-semibold text-slate-600 text-sm hidden md:table-cell">Applied Date</th>
+                  <th className="px-6 py-4 font-semibold text-slate-600 text-sm text-right">Actions</th>
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {applications.map((app) => (
+                  <tr key={app.id} className="hover:bg-slate-50 transition-colors group">
+                    <td className="px-6 py-4">
+                      <Link 
+                        to={`/candidates?id=${app.candidate_id}`} 
+                        className="font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
+                      >
+                        {app.candidate_name}
+                      </Link>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex items-center gap-2 text-slate-600">
+                        <Building size={16} className="text-slate-400" />
+                        {app.job_title} <span className="text-slate-400 text-sm font-normal">at {app.company}</span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-4">
+                      <span
+                        className={`px-3 py-1 text-xs font-semibold rounded-full border ${
+                          statusColors[app.status] || statusColors.applied
+                        } capitalize`}
+                      >
+                        {app.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 text-slate-500 text-sm hidden md:table-cell">
+                      <div className="flex items-center gap-2">
+                        <Calendar size={14} className="text-slate-400" />
+                        {new Date(app.applied_at).toLocaleDateString()}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 text-right">
+                      <button 
+                        onClick={() => setSelectedApplication(app)}
+                        className="text-indigo-600 font-medium text-sm hover:text-indigo-800 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                      >
+                        View Details
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            
+            {meta && meta.totalPages > 1 && (
+              <div className="flex items-center justify-between bg-white px-6 py-4 border-t border-slate-200 mt-auto">
+                <button
+                  onClick={() => setPage(p => Math.max(1, p - 1))}
+                  disabled={page === 1}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  Previous
+                </button>
+                <span className="text-sm text-slate-700">
+                  Page <span className="font-medium">{meta.page}</span> of <span className="font-medium">{meta.totalPages}</span>
+                </span>
+                <button
+                  onClick={() => setPage(p => Math.min(meta.totalPages, p + 1))}
+                  disabled={page === meta.totalPages}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+                >
+                  Next
+                </button>
+              </div>
+            )}
+          </div>
         )}
       </div>
 
@@ -300,14 +382,6 @@ export default function Applications() {
                 )}
               </div>
               <div className="flex items-center gap-2">
-                {!isEditMode && (
-                  <button 
-                    onClick={() => setIsEditMode(true)}
-                    className="text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 p-2 rounded-full transition-colors flex items-center gap-2"
-                  >
-                    <Edit2 size={18} />
-                  </button>
-                )}
                 <button 
                   onClick={() => setSelectedApplication(null)}
                   className="text-slate-400 hover:text-slate-600 hover:bg-slate-200 p-2 rounded-full transition-colors"
@@ -317,194 +391,180 @@ export default function Applications() {
               </div>
             </div>
             
-            {isEditMode ? (
-              <form onSubmit={handleUpdateSubmit} className="flex flex-col flex-1 overflow-hidden">
-                <div className="p-6 overflow-y-auto space-y-5 flex-1">
-                  {updateApplicationMutation.isError && (
-                    <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
-                      {((updateApplicationMutation.error as any)?.response?.data?.error || 
-                       (updateApplicationMutation.error as any)?.response?.data?.message || 
-                       "Failed to update application. Please check the fields and try again.")}
-                    </div>
-                  )}
+            <form onSubmit={handleUpdateSubmit} className="flex flex-col flex-1 overflow-hidden">
+              <div className="p-6 overflow-y-auto space-y-5 flex-1">
+                {updateApplicationMutation.isError && (
+                  <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
+                    {((updateApplicationMutation.error as ApiError)?.response?.data?.error || 
+                     (updateApplicationMutation.error as ApiError)?.response?.data?.message || 
+                     "Failed to update application. Please check the fields and try again.")}
+                  </div>
+                )}
+                
+                <div className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Candidate</label>
+                    <select
+                      required
+                      disabled={!isEditMode}
+                      value={formData.candidate_id}
+                      onChange={(e) => setFormData({...formData, candidate_id: e.target.value})}
+                      className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white disabled:bg-slate-50 disabled:text-slate-900 disabled:border-transparent disabled:appearance-none transition-all"
+                    >
+                      {candidates?.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
                   
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Candidate</label>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Job Title</label>
+                      <input 
+                        required
+                        type="text" 
+                        disabled={!isEditMode}
+                        value={formData.job_title}
+                        onChange={(e) => setFormData({...formData, job_title: e.target.value})}
+                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-900 disabled:border-transparent transition-all"
+                      />
+                    </div>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Company</label>
+                      <div className="relative">
+                        {!isEditMode && <Building size={16} className="absolute left-3 top-3 text-slate-400" />}
+                        <input 
+                          required
+                          type="text" 
+                          disabled={!isEditMode}
+                          value={formData.company}
+                          onChange={(e) => setFormData({...formData, company: e.target.value})}
+                          className={`w-full ${!isEditMode ? 'pl-9' : 'px-4'} py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-900 disabled:border-transparent transition-all`}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
                       <select
                         required
-                        value={formData.candidate_id}
-                        onChange={(e) => setFormData({...formData, candidate_id: e.target.value})}
-                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                        disabled={!isEditMode}
+                        value={formData.status}
+                        onChange={(e) => setFormData({...formData, status: e.target.value})}
+                        className={`w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white capitalize disabled:bg-slate-50 disabled:text-slate-900 disabled:border-transparent disabled:appearance-none transition-all`}
                       >
-                        {candidates?.map(c => (
-                          <option key={c.id} value={c.id}>{c.name}</option>
+                        {Object.keys(statusColors).map(status => (
+                          <option key={status} value={status}>{status}</option>
                         ))}
                       </select>
                     </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="col-span-2 sm:col-span-1">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Job Title</label>
-                        <input 
-                          required
-                          type="text" 
-                          value={formData.job_title}
-                          onChange={(e) => setFormData({...formData, job_title: e.target.value})}
-                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </div>
-                      <div className="col-span-2 sm:col-span-1">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Company</label>
-                        <input 
-                          required
-                          type="text" 
-                          value={formData.company}
-                          onChange={(e) => setFormData({...formData, company: e.target.value})}
-                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </div>
-                    </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="col-span-2 sm:col-span-1">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Status</label>
-                        <select
-                          required
-                          value={formData.status}
-                          onChange={(e) => setFormData({...formData, status: e.target.value})}
-                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white capitalize"
-                        >
-                          {Object.keys(statusColors).map(status => (
-                            <option key={status} value={status}>{status}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="col-span-2 sm:col-span-1">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Applied Date</label>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Applied Date</label>
+                      <div className="relative">
+                        {!isEditMode && <Calendar size={16} className="absolute left-3 top-3 text-slate-400" />}
                         <input 
                           required
                           type="date" 
+                          disabled={!isEditMode}
                           value={formData.applied_at}
                           onChange={(e) => setFormData({...formData, applied_at: e.target.value})}
-                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className={`w-full ${!isEditMode ? 'pl-9' : 'px-4'} py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-900 disabled:border-transparent transition-all`}
                         />
                       </div>
                     </div>
-                    
-                    <div className="grid grid-cols-2 gap-4">
-                      <div className="col-span-2 sm:col-span-1">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Salary Expectation <span className="text-slate-400 font-normal">(Optional)</span></label>
+                  </div>
+                  
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Salary Expectation <span className="text-slate-400 font-normal">(Optional)</span></label>
+                      <div className="relative">
+                        {!isEditMode && formData.salary_expectation && <span className="absolute left-3 top-2.5 text-slate-400 font-medium">$</span>}
                         <input 
                           type="number" 
+                          disabled={!isEditMode}
                           value={formData.salary_expectation}
                           onChange={(e) => setFormData({...formData, salary_expectation: e.target.value})}
-                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                        />
-                      </div>
-                      <div className="col-span-2 sm:col-span-1">
-                        <label className="block text-sm font-medium text-slate-700 mb-1">Source <span className="text-slate-400 font-normal">(Optional)</span></label>
-                        <input 
-                          type="text" 
-                          value={formData.source}
-                          onChange={(e) => setFormData({...formData, source: e.target.value})}
-                          className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                          className={`w-full ${!isEditMode && formData.salary_expectation ? 'pl-7' : 'px-4'} py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-900 disabled:border-transparent transition-all`}
+                          placeholder={!isEditMode ? "Not specified" : "e.g. 120000"}
                         />
                       </div>
                     </div>
-                    
-                    <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">Notes <span className="text-slate-400 font-normal">(Optional)</span></label>
+                    <div className="col-span-2 sm:col-span-1">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Source <span className="text-slate-400 font-normal">(Optional)</span></label>
+                      <input 
+                        type="text" 
+                        disabled={!isEditMode}
+                        value={formData.source}
+                        onChange={(e) => setFormData({...formData, source: e.target.value})}
+                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-900 disabled:border-transparent transition-all"
+                        placeholder={!isEditMode ? "Not specified" : "e.g. LinkedIn"}
+                      />
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Notes <span className="text-slate-400 font-normal">(Optional)</span></label>
+                    <div className="relative">
+                      {!isEditMode && <FileText size={16} className="absolute left-3 top-3 text-slate-400" />}
                       <textarea 
-                        value={formData.notes}
+                        disabled={!isEditMode}
+                        value={isEditMode ? formData.notes : (formData.notes || 'No notes added.')}
                         onChange={(e) => setFormData({...formData, notes: e.target.value})}
-                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 min-h-[100px]"
+                        rows={3}
+                        className={`w-full ${!isEditMode ? 'pl-9' : 'px-4'} py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 disabled:bg-slate-50 disabled:text-slate-600 disabled:border-transparent resize-none transition-all`}
+                        placeholder="Add some notes about this application..."
                       ></textarea>
                     </div>
                   </div>
                 </div>
+              </div>
 
-                <div className="p-4 border-t border-slate-100 flex gap-3 bg-white shrink-0">
-                  <button 
-                    type="button"
-                    onClick={() => {
-                      setIsEditMode(false);
-                      openApplicationDetails(selectedApplication);
-                    }}
-                    className="flex-1 px-4 py-2.5 border border-slate-200 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button 
-                    type="submit"
-                    disabled={updateApplicationMutation.isPending}
-                    className="flex-1 px-4 py-2.5 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors flex items-center justify-center gap-2"
-                  >
-                    <Save size={18} /> Save
-                  </button>
-                </div>
-              </form>
-            ) : (
-              <div className="flex flex-col flex-1 overflow-hidden">
-                <div className="p-6 flex-1 overflow-y-auto">
-                  <div className="grid grid-cols-2 gap-6">
-                    <div>
-                      <span className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Applied Date</span>
-                      <div className="font-medium text-slate-800 flex items-center gap-2">
-                        <Calendar size={16} className="text-slate-400" />
-                        {new Date(selectedApplication.applied_at).toLocaleDateString()}
-                      </div>
-                    </div>
-                    <div>
-                      <span className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Current Status</span>
-                      <span className={`inline-block px-3 py-1 text-sm font-semibold rounded-full border capitalize ${statusColors[selectedApplication.status]}`}>
-                        {selectedApplication.status}
-                      </span>
-                    </div>
-                    {selectedApplication.salary_expectation && (
-                      <div>
-                        <span className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Salary Expectation</span>
-                        <div className="font-medium text-slate-800">
-                          {selectedApplication.salary_expectation.toLocaleString()}
-                        </div>
-                      </div>
-                    )}
-                    {selectedApplication.source && (
-                      <div>
-                        <span className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1">Source</span>
-                        <div className="font-medium text-slate-800">
-                          {selectedApplication.source}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                  
-                  <div className="mt-8">
-                    <span className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Application Notes</span>
-                    <div className="bg-slate-50 border border-slate-100 rounded-xl p-4 text-slate-600 text-sm italic min-h-[100px]">
-                      {selectedApplication.notes || "No notes have been added to this application yet."}
-                    </div>
-                  </div>
-                </div>
+              <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-white shrink-0">
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={deleteApplicationMutation.isPending}
+                  className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg font-medium transition-colors"
+                >
+                  <Trash2 size={18} />
+                  {isEditMode ? "" : "Delete"}
+                </button>
 
-                <div className="p-4 border-t border-slate-100 flex justify-between items-center shrink-0">
-                  <button
-                    onClick={handleDelete}
-                    disabled={deleteApplicationMutation.isPending}
-                    className="flex items-center gap-2 text-red-600 hover:text-red-700 hover:bg-red-50 px-3 py-2 rounded-lg font-medium transition-colors"
-                  >
-                    <Trash2 size={18} />
-                    Delete
-                  </button>
-                  <button 
-                    onClick={() => setSelectedApplication(null)}
-                    className="px-6 py-2.5 bg-slate-900 text-white rounded-lg font-medium hover:bg-slate-800 transition-colors"
-                  >
-                    Close
-                  </button>
+                <div className="flex gap-2">
+                  {!isEditMode ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsEditMode(true)}
+                      className="flex items-center gap-2 px-6 py-2.5 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 transition-colors"
+                    >
+                      <Edit2 size={18} /> Edit
+                    </button>
+                  ) : (
+                    <>
+                      <button 
+                        type="button"
+                        onClick={() => {
+                          setIsEditMode(false);
+                          openApplicationDetails(selectedApplication);
+                        }}
+                        className="px-4 py-2 border border-slate-200 text-slate-700 rounded-lg font-medium hover:bg-slate-50 transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button 
+                        type="submit"
+                        disabled={updateApplicationMutation.isPending}
+                        className="flex items-center gap-2 px-6 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors"
+                      >
+                        <Save size={18} /> Save
+                      </button>
+                    </>
+                  )}
                 </div>
               </div>
-            )}
+            </form>
           </div>
         </div>
       )}
@@ -527,8 +587,8 @@ export default function Applications() {
               <div className="p-6 overflow-y-auto space-y-5 flex-1">
                 {createApplicationMutation.isError && (
                   <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
-                    {((createApplicationMutation.error as any)?.response?.data?.error || 
-                     (createApplicationMutation.error as any)?.response?.data?.message || 
+                    {((createApplicationMutation.error as ApiError)?.response?.data?.error || 
+                     (createApplicationMutation.error as ApiError)?.response?.data?.message || 
                      "Failed to create application. Please check the fields and try again.")}
                   </div>
                 )}
