@@ -9,7 +9,10 @@
     "dev:api": "npm run dev --workspace=apps/api",
     "dev:web": "npm run dev --workspace=apps/web",
     "build:shared": "npm run build --workspace=packages/shared",
-    "dev": "npm run dev:api & npm run dev:web",
+    "dev": "npx concurrently \"npm run dev:api\" \"npm run dev:web\"",
     "build": "npm run build:shared"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
   }
 }
