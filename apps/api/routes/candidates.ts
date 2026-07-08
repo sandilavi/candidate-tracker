@@ -9,7 +9,7 @@ const prisma = new PrismaClient();
 export default async function candidateRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
-  // Fetch paginated candidates
+  // Retrieves a paginated list of candidates with optional search filters.
   server.get(
     '/',
     {
@@ -65,7 +65,7 @@ export default async function candidateRoutes(app: FastifyInstance) {
     }
   );
 
-  // Fetch a single candidate by ID
+  // Retrieves a single candidate by its unique identifier.
   server.get(
     '/:id',
     {
@@ -91,7 +91,7 @@ export default async function candidateRoutes(app: FastifyInstance) {
     }
   );
 
-  // Add a new candidate
+  // Creates a new candidate record.
   server.post(
     '/',
     {
@@ -113,7 +113,7 @@ export default async function candidateRoutes(app: FastifyInstance) {
     }
   );
 
-  // Update candidate details
+  // Updates an existing candidate record.
   server.put(
     '/:id',
     {
@@ -145,7 +145,7 @@ export default async function candidateRoutes(app: FastifyInstance) {
     }
   );
 
-  // Soft delete a candidate (sets deleted_at, does not actually drop the row)
+  // Soft deletes a candidate record by setting the deleted_at timestamp.
   server.delete(
     '/:id',
     {

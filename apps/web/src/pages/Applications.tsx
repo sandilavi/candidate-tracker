@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Search, Edit2, Save, FileText, Calendar, Building, Plus, X, Trash2 } from 'lucide-react';
 import { ApplicationSchema, CandidateSchema } from '@candidate-tracker/shared';
@@ -17,10 +17,11 @@ interface ApiError {
   message: string;
 }
 
-// The API returns the Application with the candidate_name injected
+// Extended Application type incorporating relation data.
 type Application = z.infer<typeof ApplicationSchema> & {
   id: string;
   candidate_name: string;
+  candidate_email: string;
   applied_at: string;
   updated_at: string;
 };
@@ -44,7 +45,9 @@ export default function Applications() {
   const [statusFilter, setStatusFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
-  // Modal states
+  const [searchParams, setSearchParams] = useSearchParams();
+  const applicationIdFromUrl = searchParams.get('application_id');
+  // Modal visualization state variables.
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedApplication, setSelectedApplication] = useState<Application | null>(null);
   
@@ -53,7 +56,7 @@ export default function Applications() {
     job_title: '',
     company: '',
     status: 'applied',
-    applied_at: new Date().toISOString().split('T')[0],
+    applied_at: new Date().toLocaleDateString('en-CA'),
     salary_expectation: '',
     source: '',
     notes: '',
@@ -61,7 +64,7 @@ export default function Applications() {
 
   const [isEditMode, setIsEditMode] = useState(false);
 
-  // Debounce the search term to avoid spamming the API on every keystroke
+
   useEffect(() => {
     const handler = setTimeout(() => {
       setDebouncedSearchTerm(searchTerm);
@@ -71,12 +74,22 @@ export default function Applications() {
     return () => clearTimeout(handler);
   }, [searchTerm]);
 
-  // Reset page when filters change
+
+  useEffect(() => {
+    if (applicationIdFromUrl) {
+      apiClient.get(`/applications/${applicationIdFromUrl}`).then((res) => {
+        openApplicationDetails(res.data);
+        setSearchParams({});
+      }).catch(e => console.error(e));
+    }
+  }, [applicationIdFromUrl, setSearchParams]);
+
+
   useEffect(() => {
     setPage(1);
   }, [statusFilter, dateFrom, dateTo]);
 
-  // Fetch applications with all filters and pagination
+  // Retrieves paginated applications with applied filters.
   const { data: responseData, isLoading, isError } = useQuery<PaginatedResponse<Application>>({
     queryKey: ['applications', page, debouncedSearchTerm, statusFilter, dateFrom, dateTo],
     queryFn: async () => {
@@ -97,14 +110,14 @@ export default function Applications() {
   const applications = responseData?.data;
   const meta = responseData?.meta;
 
-  // Fetch candidates for the dropdown in the modal
+  // Fetches candidate relation data required for the selection dropdown.
   const { data: candidates } = useQuery<Candidate[]>({
-    queryKey: ['candidates'],
+    queryKey: ['candidates-dropdown'],
     queryFn: async () => {
-      const response = await apiClient.get('/candidates');
-      return response.data;
+      const response = await apiClient.get('/candidates', { params: { limit: 100 } });
+      return response.data.data;
     },
-    enabled: isModalOpen,
+    enabled: isModalOpen || !!selectedApplication,
   });
 
   const sanitizePayload = (data: typeof formData) => {
@@ -128,7 +141,7 @@ export default function Applications() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['applications'] });
       setIsModalOpen(false);
-      setFormData({ candidate_id: '', job_title: '', company: '', status: 'applied', applied_at: new Date().toISOString().split('T')[0], salary_expectation: '', source: '', notes: '' });
+      setFormData({ candidate_id: '', job_title: '', company: '', status: 'applied', applied_at: new Date().toLocaleDateString('en-CA'), salary_expectation: '', source: '', notes: '' });
     },
   });
 
@@ -140,12 +153,13 @@ export default function Applications() {
     onSuccess: (updatedApp) => {
       queryClient.invalidateQueries({ queryKey: ['applications'] });
       setIsEditMode(false);
-      // Wait, we need to inject candidate_name back since the PUT response doesn't return the JOINed candidate_name.
-      // But we can just use the previous selectedApplication's candidate_name.
+      // Re-inject candidate relation name after update since API omits joined fields on PUT.
       if (selectedApplication) {
+        const matchingCandidate = candidates?.find(c => c.id === updatedApp.candidate_id);
         setSelectedApplication({
           ...updatedApp,
-          candidate_name: selectedApplication.candidate_name,
+          candidate_name: matchingCandidate ? matchingCandidate.name : selectedApplication.candidate_name,
+          candidate_email: matchingCandidate ? matchingCandidate.email : selectedApplication.candidate_email,
         });
       }
     },
@@ -177,12 +191,13 @@ export default function Applications() {
   const openApplicationDetails = (app: Application) => {
     setSelectedApplication(app);
     setIsEditMode(false);
+    updateApplicationMutation.reset();
     setFormData({
       candidate_id: app.candidate_id,
       job_title: app.job_title,
       company: app.company,
       status: app.status,
-      applied_at: new Date(app.applied_at).toISOString().split('T')[0],
+      applied_at: app.applied_at.split('T')[0],
       salary_expectation: app.salary_expectation?.toString() || '',
       source: app.source || '',
       notes: app.notes || '',
@@ -204,7 +219,10 @@ export default function Applications() {
           <p className="text-slate-500 mt-1">Review and manage job applications</p>
         </div>
         <button 
-          onClick={() => setIsModalOpen(true)}
+          onClick={() => {
+            setFormData({ candidate_id: '', job_title: '', company: '', status: 'applied', applied_at: new Date().toLocaleDateString('en-CA'), salary_expectation: '', source: '', notes: '' });
+            setIsModalOpen(true);
+          }}
           className="bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-2.5 rounded-lg font-medium flex items-center gap-2 transition-colors shadow-sm"
         >
           <Plus size={20} />
@@ -301,7 +319,7 @@ export default function Applications() {
                   <tr key={app.id} className="hover:bg-slate-50 transition-colors group">
                     <td className="px-6 py-4">
                       <Link 
-                        to={`/candidates?id=${app.candidate_id}`} 
+                        to={`/candidates?candidate_id=${app.candidate_id}`} 
                         className="font-medium text-indigo-600 hover:text-indigo-800 transition-colors"
                       >
                         {app.candidate_name}
@@ -330,8 +348,8 @@ export default function Applications() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <button 
-                        onClick={() => setSelectedApplication(app)}
-                        className="text-indigo-600 font-medium text-sm hover:text-indigo-800 transition-colors opacity-0 group-hover:opacity-100 focus:opacity-100"
+                        onClick={() => openApplicationDetails(app)}
+                        className="text-indigo-600 font-medium text-sm hover:text-indigo-800 transition-colors"
                       >
                         View Details
                       </button>
@@ -381,19 +399,29 @@ export default function Applications() {
                   </p>
                 )}
               </div>
-              <div className="flex items-center gap-2">
-                <button 
-                  onClick={() => setSelectedApplication(null)}
-                  className="text-slate-400 hover:text-slate-600 hover:bg-slate-200 p-2 rounded-full transition-colors"
-                >
-                  <X size={20} />
-                </button>
+              <div className="flex flex-col items-end gap-1">
+                <div className="flex items-center gap-2">
+                  <button 
+                    onClick={() => setSelectedApplication(null)}
+                    className="text-slate-400 hover:text-slate-600 hover:bg-slate-200 p-2 rounded-full transition-colors"
+                  >
+                    <X size={20} />
+                  </button>
+                </div>
+                {!isEditMode && selectedApplication.candidate_email && (
+                  <Link 
+                    to={`/candidates?candidate_id=${selectedApplication.candidate_id}`}
+                    className="text-indigo-600 hover:text-indigo-800 hover:underline text-sm font-medium transition-colors"
+                  >
+                    {selectedApplication.candidate_email}
+                  </Link>
+                )}
               </div>
             </div>
             
             <form onSubmit={handleUpdateSubmit} className="flex flex-col flex-1 overflow-hidden">
               <div className="p-6 overflow-y-auto space-y-5 flex-1">
-                {updateApplicationMutation.isError && (
+                {isEditMode && updateApplicationMutation.isError && (
                   <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
                     {((updateApplicationMutation.error as ApiError)?.response?.data?.error || 
                      (updateApplicationMutation.error as ApiError)?.response?.data?.message || 
@@ -404,17 +432,28 @@ export default function Applications() {
                 <div className="space-y-4">
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Candidate</label>
-                    <select
-                      required
-                      disabled={!isEditMode}
-                      value={formData.candidate_id}
-                      onChange={(e) => setFormData({...formData, candidate_id: e.target.value})}
-                      className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white disabled:bg-slate-50 disabled:text-slate-900 disabled:border-transparent disabled:appearance-none transition-all"
-                    >
-                      {candidates?.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
+                    {!isEditMode ? (
+                      <div className="w-full px-4 py-2 border border-slate-200 rounded-lg bg-slate-50 text-slate-900 transition-all flex items-center">
+                        <Link 
+                          to={`/candidates?candidate_id=${selectedApplication.candidate_id}`}
+                          className="font-medium text-indigo-600 hover:text-indigo-800 hover:underline transition-colors"
+                        >
+                          {selectedApplication.candidate_name}
+                        </Link>
+                      </div>
+                    ) : (
+                      <select
+                        required
+                        value={formData.candidate_id}
+                        onChange={(e) => setFormData({...formData, candidate_id: e.target.value})}
+                        className="w-full px-4 py-2 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 bg-white"
+                      >
+                        <option value="" disabled>Select a candidate</option>
+                        {candidates?.map(c => (
+                          <option key={c.id} value={c.id}>{c.name} ({c.email})</option>
+                        ))}
+                      </select>
+                    )}
                   </div>
                   
                   <div className="grid grid-cols-2 gap-4">
@@ -604,7 +643,7 @@ export default function Applications() {
                     >
                       <option value="" disabled>Select a candidate</option>
                       {candidates?.map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
+                        <option key={c.id} value={c.id}>{c.name} ({c.email})</option>
                       ))}
                     </select>
                   </div>

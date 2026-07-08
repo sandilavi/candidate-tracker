@@ -9,14 +9,14 @@ const prisma = new PrismaClient();
 export default async function applicationRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
-  // Fetch paginated applications (supports advanced cross-entity search)
+  // Retrieves a paginated list of applications with optional cross-entity search filters.
   server.get(
     '/',
     {
       schema: {
         querystring: ApplicationQuerySchema,
         response: {
-          // Include the candidate's name so the UI doesn't have to fetch it separately
+
           200: z.object({
             data: z.array(ApplicationSchema.extend({
               candidate_name: z.string()
@@ -32,12 +32,16 @@ export default async function applicationRoutes(app: FastifyInstance) {
       },
     },
     async (request, reply) => {
-      const { page, limit, search, status, date_from, date_to } = request.query;
+      const { page, limit, search, status, date_from, date_to, candidate_id } = request.query;
 
       const AND: Prisma.ApplicationWhereInput[] = [{ candidate: { deleted_at: null } }];
 
       if (status) {
         AND.push({ status });
+      }
+
+      if (candidate_id) {
+        AND.push({ candidate_id });
       }
 
       if (date_from || date_to) {
@@ -71,7 +75,7 @@ export default async function applicationRoutes(app: FastifyInstance) {
           take: limit,
           include: {
             candidate: {
-              select: { name: true },
+              select: { name: true, email: true },
             },
           },
           orderBy: { applied_at: 'desc' },
@@ -83,6 +87,7 @@ export default async function applicationRoutes(app: FastifyInstance) {
           ...app,
           status: app.status as 'applied' | 'screening' | 'interview' | 'offer' | 'hired' | 'rejected',
           candidate_name: app.candidate.name,
+          candidate_email: app.candidate.email,
         })),
         meta: {
           total,
@@ -94,36 +99,8 @@ export default async function applicationRoutes(app: FastifyInstance) {
     }
   );
 
-  // Fetch a single application by ID
-  server.get(
-    '/:id',
-    {
-      schema: {
-        params: z.object({ id: z.string().uuid() }),
-        response: {
-          200: ApplicationSchema,
-          404: z.object({ error: z.string() }),
-        },
-      },
-    },
-    async (request, reply) => {
-      const { id } = request.params;
-      const application = await prisma.application.findUnique({
-        where: { id },
-      });
 
-      if (!application) {
-        return reply.status(404).send({ error: 'Application not found' });
-      }
-
-      return {
-        ...application,
-        status: application.status as 'applied' | 'screening' | 'interview' | 'offer' | 'hired' | 'rejected',
-      };
-    }
-  );
-
-  // Create a new application
+  // Creates a new application record.
   server.post(
     '/',
     {
@@ -148,7 +125,38 @@ export default async function applicationRoutes(app: FastifyInstance) {
     }
   );
 
-  // Update application details (like changing the status to 'interview' or 'hired')
+  // Retrieves a single application by its unique identifier.
+  server.get(
+    '/:id',
+    {
+      schema: {
+        params: z.object({ id: z.string().uuid() }),
+        response: {
+          200: ApplicationSchema.extend({ candidate_name: z.string(), candidate_email: z.string() }),
+          404: z.object({ error: z.string() }),
+        },
+      },
+    },
+    async (request, reply) => {
+      const application = await prisma.application.findUnique({
+        where: { id: request.params.id },
+        include: { candidate: true },
+      });
+
+      if (!application) {
+        return reply.status(404).send({ error: 'Application not found' });
+      }
+
+      return {
+        ...application,
+        status: application.status as 'applied' | 'screening' | 'interview' | 'offer' | 'hired' | 'rejected',
+        candidate_name: application.candidate.name,
+        candidate_email: application.candidate.email,
+      };
+    }
+  );
+
+  // Updates an existing application record.
   server.put(
     '/:id',
     {
@@ -185,7 +193,7 @@ export default async function applicationRoutes(app: FastifyInstance) {
     }
   );
 
-  // Delete an application entirely
+  // Deletes an application record by its unique identifier.
   server.delete(
     '/:id',
     {

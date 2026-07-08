@@ -12,9 +12,9 @@ model Candidate {
   id           String    @id @default(uuid()) @db.Uuid
   name         String
   email        String    @unique
-  phone        String?
+  phone        String?   @unique
   location     String?
-  linkedin_url String?
+  linkedin_url String?   @unique
   notes        String?
   created_at   DateTime  @default(now())
   updated_at   DateTime  @updatedAt

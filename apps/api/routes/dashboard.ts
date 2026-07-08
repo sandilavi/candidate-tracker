@@ -8,7 +8,7 @@ const prisma = new PrismaClient();
 export default async function dashboardRoutes(app: FastifyInstance) {
   const server = app.withTypeProvider<ZodTypeProvider>();
 
-  // Fetch all the KPI metrics for the main dashboard view
+  // Retrieves KPI metrics for the dashboard view.
   server.get(
     '/stats',
     {

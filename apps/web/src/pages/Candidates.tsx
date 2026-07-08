@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, MoreVertical, MapPin, Mail, Briefcase, Users, X, Trash2, Edit2, Save, Phone, Link as LinkIcon, FileText } from 'lucide-react';
-import { CandidateSchema } from '@candidate-tracker/shared';
+import { Plus, Search, MoreVertical, MapPin, Mail, Users, X, Trash2, Edit2, Save, Phone, Link as LinkIcon, FileText } from 'lucide-react';
+import { CandidateSchema, ApplicationSchema } from '@candidate-tracker/shared';
 import type { PaginatedResponse } from '@candidate-tracker/shared';
 import { z } from 'zod';
 import apiClient from '../api/client';
@@ -17,12 +17,14 @@ interface ApiError {
   message: string;
 }
 
-// We extend the schema with the generated fields (id, timestamps)
+// Schema extended with database-generated identification and timestamp fields.
 type Candidate = z.infer<typeof CandidateSchema> & { id: string; created_at: string; updated_at: string };
+type Application = z.infer<typeof ApplicationSchema> & { id: string, job_title: string, company: string, status: string, applied_at: string };
 
 export default function Candidates() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
+  const candidateIdFromUrl = searchParams.get('candidate_id');
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [isEditMode, setIsEditMode] = useState(false);
@@ -38,6 +40,31 @@ export default function Candidates() {
   const [page, setPage] = useState(1);
   const [searchTerm, setSearchTerm] = useState('');
   const [debouncedSearchTerm, setDebouncedSearchTerm] = useState('');
+
+  // Executes data fetching when the candidate ID URL parameter becomes available.
+  useQuery({
+    queryKey: ['candidate-url', candidateIdFromUrl],
+    queryFn: async () => {
+      if (!candidateIdFromUrl) return null;
+      const res = await apiClient.get(`/candidates/${candidateIdFromUrl}`);
+      return res.data;
+    },
+    enabled: !!candidateIdFromUrl,
+  }).data && (() => {
+
+  })();
+
+  // Intercepts URL parameters on component mount to open the candidate modal.
+  useEffect(() => {
+    if (candidateIdFromUrl) {
+      apiClient.get(`/candidates/${candidateIdFromUrl}`).then((res) => {
+        openCandidateDetails(res.data);
+        setIsModalOpen(true);
+        // Removes the search parameter from the URL state after successfully opening the modal.
+        setSearchParams({});
+      }).catch(e => console.error(e));
+    }
+  }, [candidateIdFromUrl, setSearchParams]);
 
   useEffect(() => {
     const handler = setTimeout(() => {
@@ -58,6 +85,19 @@ export default function Candidates() {
   });
 
   const candidates = responseData?.data;
+
+  // Retrieves the paginated application history for the currently selected candidate.
+  const { data: candidateApplicationsData } = useQuery<PaginatedResponse<Application>>({
+    queryKey: ['candidate-applications', selectedCandidate?.id],
+    queryFn: async () => {
+      const response = await apiClient.get('/applications', {
+        params: { candidate_id: selectedCandidate?.id, limit: 100 }
+      });
+      return response.data;
+    },
+    enabled: !!selectedCandidate && !isEditMode,
+  });
+  const candidateApplications = candidateApplicationsData?.data || [];
   const meta = responseData?.meta;
 
   useEffect(() => {
@@ -66,7 +106,7 @@ export default function Candidates() {
       const candidate = candidates.find(c => c.id === id);
       if (candidate) {
         openCandidateDetails(candidate);
-        // Clear the search param from the URL without reloading
+        // Removes the search parameter from the URL state after successfully opening the modal.
         setSearchParams({}, { replace: true });
       }
     }
@@ -144,6 +184,7 @@ export default function Candidates() {
   const openCandidateDetails = (candidate: Candidate) => {
     setSelectedCandidate(candidate);
     setIsEditMode(false);
+    updateCandidateMutation.reset();
     setFormData({
       name: candidate.name,
       email: candidate.email,
@@ -186,12 +227,7 @@ export default function Candidates() {
             className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
           />
         </div>
-        <select className="bg-slate-50 border border-slate-200 text-slate-700 py-2.5 px-4 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium">
-          <option>All Statuses</option>
-          <option>Active</option>
-          <option>Hired</option>
-          <option>Rejected</option>
-        </select>
+
       </div>
 
       {/* Candidates List / Grid */}
@@ -251,12 +287,7 @@ export default function Candidates() {
                   <button className="text-slate-400 hover:text-slate-600 p-1 rounded-md hover:bg-slate-100 transition-colors">
                     <MoreVertical size={20} />
                   </button>
-                  <div className="mt-4 flex items-center gap-2">
-                    <span className="bg-slate-100 text-slate-600 text-xs font-semibold px-2.5 py-1 rounded-md flex items-center gap-1">
-                      <Briefcase size={12} />
-                      Applied
-                    </span>
-                  </div>
+
                 </div>
               </div>
             ))}
@@ -315,7 +346,7 @@ export default function Candidates() {
             
             <form onSubmit={isEditMode ? handleUpdateSubmit : (e) => e.preventDefault()} className="flex flex-col flex-1 overflow-hidden">
               <div className="p-6 overflow-y-auto space-y-5 flex-1">
-                {updateCandidateMutation.isError && (
+                {isEditMode && updateCandidateMutation.isError && (
                   <div className="p-3 bg-red-50 text-red-600 text-sm rounded-lg border border-red-100">
                     {((updateCandidateMutation.error as ApiError)?.response?.data?.error || 
                      (updateCandidateMutation.error as ApiError)?.response?.data?.message || 
@@ -421,6 +452,52 @@ export default function Candidates() {
                   </div>
                 </div>
 
+                {/* Applications List Table (Only in View Mode) */}
+                {!isEditMode && (
+                  <div className="pt-6 mt-6 border-t border-slate-100">
+                    <h4 className="text-sm font-bold text-slate-900 mb-4 uppercase tracking-wider">Applications</h4>
+                    {candidateApplications.length === 0 ? (
+                      <div className="text-center py-6 bg-slate-50 rounded-xl border border-slate-200 border-dashed">
+                        <p className="text-slate-500 text-sm">No applications found for this candidate.</p>
+                      </div>
+                    ) : (
+                      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden shadow-sm">
+                        <table className="w-full text-left text-sm">
+                          <thead className="bg-slate-50 text-slate-500 border-b border-slate-200">
+                            <tr>
+                              <th className="px-4 py-2 font-medium">Role</th>
+                              <th className="px-4 py-2 font-medium">Status</th>
+                              <th className="px-4 py-2 font-medium text-right">Action</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {candidateApplications.map(app => (
+                              <tr key={app.id} className="hover:bg-slate-50 transition-colors">
+                                <td className="px-4 py-3">
+                                  <div className="font-medium text-slate-900">{app.job_title}</div>
+                                  <div className="text-xs text-slate-500">{app.company}</div>
+                                </td>
+                                <td className="px-4 py-3">
+                                  <span className="text-xs font-semibold px-2 py-1 bg-slate-100 rounded-md capitalize text-slate-700">
+                                    {app.status}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-right">
+                                  <Link 
+                                    to={`/applications?application_id=${app.id}`}
+                                    className="text-blue-600 hover:text-blue-800 font-medium text-xs bg-blue-50 px-2 py-1 rounded-md transition-colors"
+                                  >
+                                    View
+                                  </Link>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                )}
               </div>
 
               <div className="p-4 border-t border-slate-100 flex items-center justify-between bg-white shrink-0">
