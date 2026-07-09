@@ -11,7 +11,9 @@
     "build:shared": "npm run build --workspace=packages/shared",
     "test": "npm run test --workspaces --if-present",
     "dev": "npx concurrently \"npm run dev:api\" \"npm run dev:web\"",
-    "build": "npm run build:shared"
+    "build": "npm run build:shared",
+    "db:migrate": "npm run db:migrate --workspace=@candidate-tracker/api",
+    "db:seed": "npm run db:seed --workspace=@candidate-tracker/api"
   },
   "devDependencies": {
     "concurrently": "^8.2.2"

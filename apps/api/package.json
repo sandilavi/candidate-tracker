@@ -5,7 +5,9 @@
   "main": "index.ts",
   "scripts": {
     "dev": "tsx watch index.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "db:migrate": "prisma migrate deploy",
+    "db:seed": "prisma db seed"
   },
   "dependencies": {
     "@candidate-tracker/shared": "*",
